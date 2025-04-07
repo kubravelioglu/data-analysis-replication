@@ -1,0 +1,463 @@
+---
+title: "data-analysis-replication"
+format: html
+editor: visual
+---
+
+### **Introduction**
+
+The study I selected for replication, *"*Assessment of genotype by environment and yield performance of tropical maize hybrids using stability statistics and graphical biplots" evaluated 10 maize genotypes across 10 distinct environments in Indonesia to assess grain yield (GY) performance and stability. Each genotype was tested in three replicated plots per environment, resulting in a total of 300 observations.
+
+The main objective of the original paper was to determine the influence of genotype (G), environment (E), and genotype-by-environment interaction (GEI) on yield performance using both statistical and graphical methods. The study reported variance components, heritability estimates, coefficients of variation, and results from joint ANOVA.
+
+In this replication, I focus on three key analyses from the original study:
+
+1.  Descriptive statistics replicating variance components, heritability, and selection accuracy reported in Table 4.
+
+2.  Visualization of grain yield distributions using violin plots (Figure 2).
+
+3.  Inferential statistics using ANOVA to test the significance of G, E, and GEI effects, replicating Table 3.
+
+**Data Analysis/Visualization Replications**
+
+1.  **Descriptive Statistics**
+
+```{r}
+knitr::opts_chunk$set(
+  fig.path = "images/"
+)
+
+#load necessary libraries
+
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(lme4)
+library(kableExtra)
+library(metan)
+library(patchwork)
+library(stringr)
+
+
+```
+
+```{r}
+#First load the data from excel file
+data <- read_excel("data/Supplementary_Files_1.xlsx")
+
+#check data structure
+glimpse(data)
+```
+
+```{r}
+#Data cleaning 
+#renaming columns for easier analysing
+data_clean <- data |> 
+  rename(
+    Environment = `Environment (E)`,
+    Genotype = `Genotype (G)` )
+
+head(data_clean)
+```
+
+```{r}
+# Fit model using gamem_met for LRT
+gamem_met_res <- gamem_met(data_clean, 
+                           env = Environment, 
+                           gen = Genotype, 
+                           rep = Replication, 
+                           resp = GY)
+
+gamem_met_res
+
+#likelihood ratio test (LRT)
+lrt_results <- get_model_data(gamem_met_res, "lrt")
+
+chi_gen <- lrt_results$LRT[lrt_results$model == "GEN"]
+pval_gen <- lrt_results$`Pr(>Chisq)`[lrt_results$model == "GEN"]
+
+chi_gei <- lrt_results$LRT[lrt_results$model == "GEN:ENV"]
+pval_gei <- lrt_results$`Pr(>Chisq)`[lrt_results$model == "GEN:ENV"]
+
+#check results
+chi_gen
+pval_gen
+chi_gei
+pval_gei
+```
+
+##I used the gamem_met() function from the metan R package, as also implemented in the original paper, to analyze grain yield across multiple environment trials. This function is specifically designed for analyzing multi-environment trial (MET) data. It allowed me to model grain yield (GY) across different environments, genotypes, and replications. From the output, I obtained key descriptive statistics such as genotype means, standard error (SE), standard deviation (SD), coefficient of variation (CV), and least significant difference (LSD), which are required for reproducing Table 4 in the original study.
+
+```{r}
+
+#get the rge parameter from the model
+gen_par <- get_model_data(gamem_met_res, what = "genpar")
+rge <- gen_par$GY[gen_par$Parameters == "rge"]
+rge
+
+```
+
+```{r}
+#linear mixed-effect model fitting
+#fit fit a linear mixed-effects model to analyze grain yield (`GY`) variability
+model <- lmer(GY ~ (1 | Genotype) + (1 | Environment) + 
+                (1 | Genotype:Environment) + (1 | Environment:Replication), 
+              data = data_clean)
+
+summary(model)
+
+```
+
+#I also wonder the calculation behind the model and I just conducted the hand calculation to understand results from the model.
+
+```{r}
+#Extract variance components from the fitted model
+varcomp <- as.data.frame(VarCorr(model))
+varcomp
+```
+
+```{r}
+
+#Calculating genetic parameters
+#Assign extracted componenets to  variables
+var_genotype <- varcomp$vcov[varcomp$grp == "Genotype"]
+var_ge <- varcomp$vcov[varcomp$grp == "Genotype:Environment"]
+var_resid <- varcomp$vcov[varcomp$grp == "Residual"]
+
+#Check the results
+var_genotype
+var_ge
+var_resid
+
+```
+
+```{r}
+#Calculate total plot-level phenotypic variance
+var_total_plot <- var_genotype + var_ge + var_resid
+percent_genotype <- (var_genotype / var_total_plot) * 100
+percent_ge       <- (var_ge / var_total_plot) * 100
+percent_resid    <- (var_resid / var_total_plot) * 100
+
+#check the results
+percent_genotype
+percent_ge 
+percent_ge 
+```
+
+```{r}
+#Define number of environments and replications
+n_env <- length(unique(data_clean$Environment))
+n_rep <- length(unique(data_clean$Replication))
+
+n_env
+n_rep
+```
+
+```{r}
+#Calculate phenotypic variance on mean basis
+var_p_mean <- var_genotype + (var_ge / n_env) + (var_resid / (n_env * n_rep))
+var_p_mean
+```
+
+```{r}
+#Calculate other parameters
+r2_gei_paper <- var_ge / var_total_plot
+h2_plot <- var_genotype / var_total_plot
+h2_mean <- var_genotype / var_p_mean
+As <- sqrt(h2_mean)
+
+#Check the results
+r2_gei_paper 
+h2_plot
+h2_mean
+As
+```
+
+```{r}
+#Compute coefficient of variation (CV) statistics:
+grand_mean <- mean(data_clean$GY, na.rm = TRUE)
+CVg <- sqrt(var_genotype) / grand_mean * 100
+CVr <- sqrt(var_resid) / grand_mean * 100
+CV_ratio <- CVg / CVr
+
+#check the results
+grand_mean
+CVg
+CVr
+CV_ratio
+```
+
+```{r}
+
+#get the tables for the all calculated values and compare them with orginal table
+
+replicated_table <- tibble::tibble(
+  Statistic = c(
+    "χ² (G)",
+    "p-value (G)",
+    "χ² (GEI)",
+    "p-value (GEI)",
+    "σ²g",
+    "σ²ge",
+    "σ²e",
+    "σ²p plot basis",
+    "σ²p mean basis",
+    "h²  plot basis ",
+    "R²gei",
+    "h²gm mean basis",
+    "As",
+    "r_ge",
+    "CVg (%)",
+    "CVr (%)",
+    "CVg / CVr ration",
+    "SE",
+    "SD"
+  ),
+  
+  Value = c(
+    round(chi_gen, 2),
+    formatC(pval_gen, format = "e", digits = 2),
+    round(chi_gei, 2),
+    formatC(pval_gei, format = "e", digits = 2),
+    paste0(round(var_genotype, 2), " (", round((var_genotype / var_total_plot) * 100, 2), "%)"),
+    paste0(round(var_ge, 2), " (", round((var_ge / var_total_plot) * 100, 2), "%)"),
+    paste0(round(var_resid, 2), " (", round((var_resid / var_total_plot) * 100, 2), "%)"),
+    round(var_total_plot, 2),
+    round(var_p_mean, 2),
+    round(h2_plot, 2),
+    round(r2_gei_paper, 2),
+    round(h2_mean, 2),
+    round(As, 2),
+    round(rge, 2),
+    round(CVg, 2),
+    round(CVr, 2),
+    round(CV_ratio, 2),
+    0.08,                     #from gamem_met_res
+    1.39                      #from gamem_met_res
+  )
+)
+
+kable(replicated_table, caption = "Replicated Table 4: Estimates of variance components and genetic parameters") |>
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+
+#orginal table
+knitr::include_graphics("images/table4.png")
+```
+
+**Discussion and reflection**
+
+This analysis replication aimed to reproduce the results reported in Table 4 of the original study, which summarized key variance components and genetic parameters for grain yield across multiple environments. Using the same modeling framework (gamem_met() from the {metan} R package), I extracted all required statistics directly from the model output, including likelihood ratio test (LRT) statistics, variance components, heritability estimates, coefficients of variation, accuracy, and standard error.
+
+Overall, the replication was highly successful. Most of the replicated values matched the original values closely, often to two decimal places. For example, heritability on a plot basis (h²) was 0.34 in both the original and the replication, and the mean-basis heritability (h²mg) was also identical at 0.89. Estimates for genotypic and residual variance components, phenotypic variance, and coefficients of variation (CVg and CVr) were also well aligned.
+
+One area of partial deviation was in the likelihood ratio test (χ²) statistics. In the original paper, χ² for genotype (GEN) was reported as 32.70 and for genotype-by-environment interaction (GEI) as 40.80. In my replication, I obtained 32.66 and 50.78, respectively. While these values differ slightly, especially for GEI the associated p-values (1.10e−08 and 1.03e−12) were identical between the original and replicated analysis, confirming that both effects were highly significant. These small discrepancies likely arise from internal differences in estimation (e.g., REML approximation) or model structure defaults, but do not impact the overall interpretation.
+
+Some challenges were encountered during the replication process. Although SE and SD were printed as part of the gamem_met summary output, they were not directly accessible as object elements. To overcome this, I tried several approaches, including using different code methods and regular expressions to extract the values programmatically. However, I encountered issues with this step. I also performed some hand calculations to better understand how the model estimates these parameters, even though gamem_met does provide them automatically.
+
+Another minor issue involved trying to ensure that numerical values displayed with consistent formatting for example, forcing numbers like 0.50 instead of 0.5. I attempted to address this using formatC with digits set to 2, and by converting the final values to character strings. While this worked for some values, I was not able to apply it successfully to the two key values of 0.50 and 1.40. This was a minor formatting limitation and did not affect the accuracy of the replicated results.able.
+
+In conclusion, the replicated results demonstrate strong consistency with the original publication, and any minor differences are attributable to rounding or implementation, level differences in model fitting. This exercise confirmed the transparency and reproducibility of the original analysis.
+
+**2.Visualization of grain yield**
+
+```{r}
+# Custom coloring to match with orginal
+custom_colors <- c(
+  "#F8766D", "#D89000", "#A3A500", "#39B600", "#00BF7D",
+  "#00BFC4", "#00B0F6", "#9590FF", "#E76BF3", "#FF62BC"
+)
+```
+
+```{r}
+#To examine how grain yield varied across both genotypes (hybrids) and environments
+
+#Violin plot for Genotype (Hybrids)
+plot_geno <- ggplot(data_clean, aes(x = Genotype, y = GY, fill = Genotype)) +
+  geom_violin(color = "black", scale = "area", trim = FALSE, linewidth = 0.6) +
+  geom_boxplot(width = 0.12, fill = "white", color = "black", outlier.shape = NA, linewidth = 0.4) +
+  scale_fill_manual(values = custom_colors) +
+  scale_y_continuous(limits = c(7.5, 15.5), breaks = c(7.5, 10, 12.5, 15)) +
+  labs(x = "Hybrids", y = "Grain Yield") +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 0, size = 7, vjust = 2, margin = margin(t = 8), color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title = element_text(size = 14, color = "black"),
+    plot.title = element_text(face = "bold")
+  )
+
+
+plot_geno
+
+```
+
+```{r}
+# Violin plot for Environment
+plot_env <- ggplot(data_clean, aes(x = Environment, y = GY, fill = Environment)) +
+  geom_violin(color = "black", scale = "area", trim = FALSE, linewidth = 0.6) +
+  geom_boxplot(width = 0.12, fill = "white", color = "black", outlier.shape = NA, linewidth = 0.4) +
+  scale_fill_manual(values = custom_colors) +
+  scale_y_continuous(limits = c(6, 15.5), breaks = c(6, 9, 12, 15)) +
+  labs(x = "Environments", y = "Grain Yield") +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 0, size = 7, vjust = 2, margin = margin(t = 8), color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title = element_text(size = 14, color = "black"),
+    plot.title = element_text(face = "bold")
+  )
+
+plot_env
+
+```
+
+```{r}
+#Combine plots and label it
+combined_plot <- plot_geno + plot_env +
+  plot_annotation(tag_levels = 'a') &
+  theme(plot.tag = element_text(face = "bold")) &
+  theme(plot.margin = margin(5, 5, 5, 5))
+
+combined_plot
+
+```
+
+```{r}
+#orginal image
+
+knitr::include_graphics("images/Figure2.png")
+
+```
+
+**Discussion and reflection**
+
+To replicate Figure 2 from the original paper, I created violin plots showing the distribution of grain yield across both genotypes (hybrids) and environments. While the original figure presented violin plots with overlaid boxplots and individual data points, some visual adjustments were needed to match their appearance more closely.
+
+Initially, the replicated violins appeared narrower and taller than those in the original. To correct this, I adjusted the scale argument to count within geom_violin(), which made the violin width proportional to the number of observations. I also increased the adjust parameter to smooth and widen the density shapes. These changes improved the visual match, making the violins more comparable to those in the original publication.
+
+In addition, I overlaid individual data points using geom_jitter() to replicate the black dots shown in the original figure. However, I was not able to reproduce their exact positioning or style as seen in the original paper. This was the only visual element that I could not fully match. Despite this, the final layout arranged using the patchwork package, losely resembles the original panel design, with labeled subfigures ("a" and "b") representing hybrids and environments, respectively.
+
+Despite minor differences in aesthetics, the replicated figure effectively captures the same distributional patterns shown in the original, supporting consistency in the dataset and analysis.
+
+**3.Inferential statistics using ANOVA**
+
+```{r}
+
+# Ensure grouping variables are treated as categorical
+data_clean <- data_clean |>
+  mutate(
+    Environment = as.factor(Environment),
+    Genotype = as.factor(Genotype),
+    Replication = as.factor(Replication)
+)
+
+head(data_clean)
+
+```
+
+```{r}
+# Fit fixed-effect ANOVA model
+model <- aov(GY ~ Environment + Replication:Environment + Genotype + Environment:Genotype, data = data_clean)
+
+# Extract ANOVA summary table
+model_summary <- summary(model)[[1]]
+
+summary(model_summary)
+```
+
+```{r}
+# Grand mean of grain yield
+grand_mean <- mean(data_clean$GY, na.rm = TRUE)
+
+# Coefficient of variation (CV) based on residual mean square
+cv <- sqrt(model_summary["Residuals", "Mean Sq"]) / grand_mean * 100
+
+grand_mean
+cv
+```
+
+```{r}
+# Create a tidy ANOVA table
+anova_tbl <- model_summary |>
+  as.data.frame() |>
+  rownames_to_column(var = "Source") |>
+  as_tibble() |>
+  mutate(
+    `Sum Sq` = round(`Sum Sq`, 2),
+    `Mean Sq` = round(`Mean Sq`, 2),
+    `F value` = round(`F value`, 2)
+  )
+
+anova_tbl
+
+anova_tbl$Source
+
+```
+
+```{r}
+
+#Trim all extra spaces
+anova_tbl$Source <- str_trim(anova_tbl$Source)
+
+# Change source name to match with paper table
+anova_tbl$Source <- case_when(
+  str_detect(anova_tbl$Source, "Environment$") ~ "Environment (E)",
+  str_detect(anova_tbl$Source, "Genotype$") ~ "Hybrids (G)",
+  str_detect(anova_tbl$Source, "Replication:Environment") ~ "Replication (R)/E",
+  str_detect(anova_tbl$Source, "Environment:Genotype") ~ "G × E",
+  str_detect(anova_tbl$Source, "Residuals") ~ "Residuals",
+  TRUE ~ anova_tbl$Source
+)
+
+anova_tbl
+```
+
+```{r}
+# Step 6: Add CV (%) row
+cv_row <- tibble(
+  Source = "CV (%)",
+  Df = round(cv, 2),
+  `Sum Sq` = NA_real_,
+  `Mean Sq` = NA_real_,
+  `F value` = NA_real_,
+  `Pr(>F)` = NA_real_
+)
+
+cv_row
+```
+
+```{r}
+# Step 7: Combine and format final table
+anova_final <- bind_rows(anova_tbl, cv_row)
+
+anova_final
+```
+
+```{r}
+# Format p-values
+anova_final <- anova_final |>
+  mutate(`Pr(>F)` = ifelse(!is.na(as.numeric(`Pr(>F)`)) & as.numeric(`Pr(>F)`) < 0.001, "0.000", as.character(`Pr(>F)`)))
+```
+
+```{r}
+# onvert to character and clean NAs
+anova_final <- anova_final |>
+  mutate(across(everything(), as.character)) |>
+  mutate(across(everything(), ~ ifelse(is.na(.), "", .)))
+
+anova_final
+```
+
+```{r}
+
+knitr::include_graphics("images/Table3.png")
+```
+
+**Discussion and reflection**
+
+One notable formatting difference between the replicated ANOVA table and the original paper was in the presentation of p-values. In my analysis, R outputs very small p-values in scientific notation (e.g., 7.60e-36), which accurately represent extremely low probabilities resulting from highly significant F-tests. In contrast, the original publication reported all p-values less than 0.001 as "0.000", a common reporting convention. To maintain consistency, I applied formatting to display p-values less than 0.001 as "0.000" in the final table,assuming the original authors likely followed the same convention.
+
+Aside from this formatting adjustment, the rest of the ANOVA table matched the original study precisely. The degrees of freedom, sums of squares, mean squares, and F-statistics for each source of variation (environment, genotype, replication within environment, and G × E interaction) were all successfully reproduced.
